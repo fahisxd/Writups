@@ -2,7 +2,7 @@
 
 > Room: https://tryhackme.com/room/silent-monitor
 >
-> Don’t mind my English, this is purely from me, no AI 😭
+> Don’t mind my English, this is purely from me
 
 ![Silent Monitor room](images/01-room.png)
 
