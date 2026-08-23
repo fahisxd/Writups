@@ -4,7 +4,7 @@
 >
 > Don’t mind my English, this is purely from me
 
-![Silent Monitor room](images/01-room.png)
+![Silent Monitor room](image/01-room.png)
 
 Target machine booted...
 
@@ -38,7 +38,7 @@ only two ports open: **22 (SSH)** and **5050 (HTTP)**
 
 the web looked like some kinda internal company dashboard, but there was nothing juicy on the surface so i ran a dir scan
 
-![CorpNet home](images/02-corpnet-home.png)
+![CorpNet home](image/02-corpnet-home.png)
 
 ```bash
 $ gobuster dir -u http://10.48.145.53:5050 -w /usr/share/wordlists/seclists/Discovery/Web-Content/big.txt
@@ -64,11 +64,11 @@ LESSGOOO
 
 while it keeps scanning, let’s take a look at the login page
 
-![Login page](images/04-login-page.png)
+![Login page](image/04-login-page.png)
 
 okk its a login page
 
-![Invalid login](images/03-login-error.png)
+![Invalid login](image/03-login-error.png)
 
 it gave the error *“Invalid username or password.”* on invalid password or username
 
@@ -86,7 +86,7 @@ lessgooo!!!
 
 so yeah... SQLi worked and we got in
 
-![Dashboard](images/05-dashboard.png)
+![Dashboard](image/05-dashboard.png)
 
 ## Health page
 
@@ -94,7 +94,7 @@ the `/internal/health` page looks delulu
 
 and from one of the logs we found this
 
-![Health log clue](images/06-health-log-clue.png)
+![Health log clue](image/06-health-log-clue.png)
 
 ```text
 2026-05-19 03:16:04    netops    HEALTH_CHECK    127.0.0.1%0awhoami
@@ -104,7 +104,7 @@ lets try different methods...
 
 weirdly, this didn’t work directly from the web page, so i sent the request through Burp. not sure why yet, but it worked there.
 
-![Burp ping version](images/07-burp-ping-version.png)
+![Burp ping version](image/07-burp-ping-version.png)
 
 ```text
 $ ping -c 2 -W 1 127.0.0.1 -V
@@ -115,11 +115,11 @@ TvT
 
 with `ls` we found some python files and a `secret.config` file
 
-![Burp command output](images/09-burp-command.png)
+![Burp command output](image/09-burp-command.png)
 
 `app.py` is just the backend, nothing interesting. the file that lures me in is `secret.config`, so lets check that out
 
-![app.py in Burp](images/08-burp-app-py.png)
+![app.py in Burp](image/08-burp-app-py.png)
 
 ```ini
 # netops application config
@@ -164,7 +164,7 @@ sysadmin@tryhackme-2204:~$
 
 **bingo!! yep, they were SSH credentials**
 
-![User flag redacted](images/10-user-flag-redacted.png)
+![User flag redacted](image/10-user-flag-redacted.png)
 
 ## Privilege Escalation
 
@@ -198,8 +198,8 @@ we gonna use `keepass4crack.py`
 
 # PASSWORD FOUND!!!
 
-![KeePass4Crack result — password redacted](images/11-keepass4crack-redacted.png)
+![KeePass4Crack result — password redacted](image/11-keepass4crack-redacted.png)
 
 and the **root flag** was right there in `/root/root.txt`
 
-![Root flag redacted](images/12-root-flag-redacted.png)
+![Root flag redacted](image/12-root-flag-redacted.png)
