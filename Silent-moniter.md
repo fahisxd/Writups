@@ -38,6 +38,7 @@ only two ports open: **22 (SSH)** and **5050 (HTTP)**
 
 the web looked like some kinda internal company dashboard, but there was nothing juicy on the surface so i ran a dir scan
 
+![CorpNet home](images/02-corpnet-home.png)
 
 ```bash
 $ gobuster dir -u http://10.48.145.53:5050 -w /usr/share/wordlists/seclists/Discovery/Web-Content/big.txt
