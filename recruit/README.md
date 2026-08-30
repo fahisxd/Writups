@@ -1,40 +1,40 @@
 # Recruit — TryHackMe Write-up
 
-> **Room:** [SQL Injection Introduction](https://tryhackme.com/room/sqlinjectionintroduction)  
-> **Focus:** Web enumeration, local file inclusion, and UNION-based SQL injection  
-> **Disclaimer:** This write-up documents activity performed in an authorized TryHackMe lab. Do not test these techniques against systems you do not own or have permission to assess.
+> Room: [SQL Injection Introduction](https://tryhackme.com/room/sqlinjectionintroduction)
 
-## Overview
+Target machine booted...  
+AttackBox booted...  
+VPN connected...
 
-The Recruit application exposes two major vulnerabilities. The `file.php` endpoint can read local files, which discloses the HR login credentials, while the authenticated candidate search is vulnerable to UNION-based SQL injection. Chaining these issues provides access to the dashboard and allows the application's database contents to be enumerated.
+Let's get into it.
 
-Flags and sensitive answers are intentionally redacted.
+## Nmap scan
 
-## Reconnaissance
-
-After starting the target and connecting through the TryHackMe VPN, I scanned the host with Nmap:
+I started with an Nmap scan:
 
 ```bash
 nmap -sC -sV 10.49.152.230
 ```
 
-The scan identified three open ports:
+```text
+22/tcp open  ssh     OpenSSH 8.2p1 Ubuntu 4ubuntu0.7
+53/tcp open  domain  ISC BIND 9.16.1
+80/tcp open  http    Apache httpd 2.4.41
+```
 
-| Port | Service | Version |
-| ---: | --- | --- |
-| 22/tcp | SSH | OpenSSH 8.2p1 Ubuntu 4ubuntu0.7 |
-| 53/tcp | DNS | ISC BIND 9.16.1 |
-| 80/tcp | HTTP | Apache httpd 2.4.41 |
-
-Browsing to the web server revealed a Recruit login page.
+Port 80 was open, so let's access the website.
 
 ![Recruit login page](images/recruit-login-page.png)
 
-Basic SQL injection payloads did not bypass the login form, so I followed the **Access API** link instead.
+I found a login page.
+
+I tried some basic SQL injection against the login form, but it didn't seem exploitable. So let's check out the **Access API** endpoint instead.
 
 ![Recruit API FAQ](images/recruit-api-faq.png)
 
-The FAQ disclosed an endpoint that accepts a URL-like value:
+Some kinda FAQ page.
+
+In the second FAQ, I found another endpoint:
 
 ```text
 /file.php?cv=<URL>
@@ -42,9 +42,9 @@ The FAQ disclosed an endpoint that accepts a URL-like value:
 
 ![File endpoint shown in the FAQ](images/file-endpoint-faq.png)
 
-## Content discovery
+That definitely looks interesting since it accepts a URL/file-like value. I'll come back to it, but first let's check if there are any other directories hiding on the server.
 
-I used `ffuf` to look for additional files and directories:
+## Directory fuzzing
 
 ```bash
 ffuf -u http://10.49.152.230/FUZZ \
@@ -62,65 +62,96 @@ server-status
 sitemap.xml
 ```
 
-The sitemap confirmed several known routes and highlighted `/mail`. Inside that directory, `mail.log` contained an operational note about the HR account. It also clarified that the credentials were stored in the application's configuration file, making password brute-forcing unnecessary.
+`sitemap.xml` mostly revealed endpoints we already had—including `/mail`.
+
+Inside `/mail`, I found a `mail.log` file.
+
+And yep... one of the emails leaked some useful information about the `hr` user.
 
 ![Credential-related entry in mail.log](images/mail-log-credential-note.png)
 
-## Arbitrary file read
+My first thought was to lowkey use Hydra to brute-force `hr`.
 
-The `cv` parameter is passed to a server-side file-reading function without sufficient validation. Supplying a local path therefore allows files readable by the web-server process to be returned to the client.
+> **Update from future me:** Hydra wasn't needed 😭
 
-I used the endpoint to request the application's configuration file:
+By that time, let's see what `/file.php` actually does.
+
+## What does `file.php` do?
+
+It basically works like a file reader on the web. Since it takes user-controlled input without properly restricting it, an attacker can use it to read sensitive files from the server.
+
+So I tried checking `config.php`, because config files usually contain juicy stuff like credentials—and I couldn't access it directly through the browser.
 
 ```text
 http://10.49.152.230/file.php?cv=config.php
 ```
 
-The response disclosed database configuration and the temporary HR credentials. This is an arbitrary file-read/local file inclusion issue: user-controlled input determines which server-side file is loaded.
-
 ![Application configuration disclosed through file.php](images/config-file-disclosure.png)
 
-I then logged in as `hr` using the disclosed password and reached the candidate dashboard, which revealed the first flag.
+Oo...
+
+We got the password for `hr`.
+
+So yeah, Hydra wasn't needed after all.
+
+I used those credentials to log in to the dashboard and got the first flag.
 
 ![Authenticated candidate dashboard](images/candidate-dashboard.png)
 
-## SQL injection in candidate search
+## SQL injection in the search feature
 
-The dashboard includes a candidate search field. Entering a single quote caused the application to return a MySQL syntax error, confirming that the value was being inserted into a query unsafely.
+Yup—the search feature is vulnerable to SQL injection.
+
+Submitting a single quote caused a MySQL syntax error, which tells us our input is being placed directly inside a database query.
 
 ![SQL error caused by a single quote](images/sql-syntax-error.png)
 
-### Determining the column count
+### Finding the number of columns
 
-Before using `UNION SELECT`, I determined how many columns the original query returns. I incremented the `ORDER BY` index until the application produced an error:
+Before using `UNION SELECT`, we first need to know how many columns the original query returns.
+
+For that, we can use:
 
 ```sql
 1' ORDER BY 1-- -
+```
+
+Then increase the number one by one:
+
+```sql
 1' ORDER BY 2-- -
 1' ORDER BY 3-- -
 1' ORDER BY 4-- -
 1' ORDER BY 5-- -
 ```
 
-`ORDER BY 4` succeeded, while `ORDER BY 5` failed with an unknown-column error. The original query therefore returns four columns.
+`ORDER BY` tells the database to sort the result using a specific column number.
+
+So if `ORDER BY 4` works but `ORDER BY 5` throws an error, we know the query returns four columns.
 
 ![ORDER BY 5 error](images/order-by-column-error.png)
 
-### Identifying the database
+And yep—there are **4 columns**.
 
-With the column count known, I used MySQL's `database()` function:
+### Finding the database name
+
+Now that we know there are four columns, we can use a `UNION SELECT` payload:
 
 ```sql
 1' UNION SELECT 1,2,3,database()-- -
 ```
 
-The fourth column was reflected in the page and revealed the active database as `recruit_db`.
+`database()` is a built-in MySQL function that returns the name of the database currently being used.
 
 ![Current database name](images/database-name.png)
 
-### Enumerating tables
+`recruit_db` is the database name.
 
-Next, I queried `information_schema.tables` for tables in the current database:
+### Finding the tables
+
+Now that we know the database name, we can enumerate the tables inside it.
+
+We query `information_schema.tables`, which stores metadata about database tables, and use `group_concat()` to display all matching table names in one result.
 
 ```sql
 1' UNION SELECT 1,2,3,
@@ -129,16 +160,22 @@ FROM information_schema.tables
 WHERE table_schema='recruit_db'-- -
 ```
 
-This returned two tables:
-
-- `candidates`
-- `users`
-
 ![Tables in recruit_db](images/database-tables.png)
 
-### Enumerating columns
+The result reveals two tables:
 
-I queried `information_schema.columns` to list the columns in `users`:
+```text
+candidates
+users
+```
+
+`users` definitely looks delicious.
+
+### Finding the columns
+
+Now let's enumerate the columns inside the `users` table.
+
+`information_schema.columns` works similarly to `information_schema.tables`, except this one stores metadata about columns instead of tables.
 
 ```sql
 1' UNION SELECT 1,2,3,
@@ -148,13 +185,21 @@ WHERE table_schema='recruit_db'
   AND table_name='users'-- -
 ```
 
-The result included the security-relevant `username` and `password` columns.
-
 ![Columns in the users table](images/users-table-columns.png)
 
-### Dumping credentials
+And yep—we got the columns.
 
-Finally, I concatenated each username and password into the reflected column:
+Out of all of them, `username` and `password` are obviously the most interesting.
+
+And here's another major security issue: **the passwords are being stored in plaintext.**
+
+That's a huge red flag. Passwords should never be stored directly. They should be protected using a strong one-way password hashing function, so even if the database is exposed, the original passwords aren't immediately revealed.
+
+In this case, the SQL injection gives us access to the database, and the plaintext password storage makes the impact even worse.
+
+### Dumping the credentials
+
+Now that we know the interesting columns, let's dump the credentials from the `users` table.
 
 ```sql
 1' UNION SELECT 1,2,3,
@@ -162,32 +207,16 @@ group_concat(username,':',password SEPARATOR '<br>')
 FROM users-- -
 ```
 
+`group_concat()` lets us combine multiple rows into a single result. Here, I'm joining each username with its corresponding password.
+
 ![Redacted credential dump](images/credential-dump-redacted.png)
 
-If any of the SQL injection steps were confusing, I recommend going through TryHackMe’s SQL Injection Introduction room first:
-https://tryhackme.com/room/sqlinjectionintroduction
+Got it gng!!
 
-The query exposed the application users and their plaintext passwords. The recovered administrator credentials allowed me to authenticate as the privileged user and retrieve the final flag.
+The credentials were successfully dumped. I logged in as the admin user and, with that...
 
-## Security impact
+## GOT THE FLAG 🚩
 
-These findings compound one another:
+This room was a nice example of how smaller issues can chain together: the file reader leaked the first credentials, the SQL injection exposed the database, and the plaintext passwords made the whole thing even worse.
 
-1. The file-read vulnerability exposes application secrets and valid login credentials.
-2. The disclosed credentials provide authenticated access to the dashboard.
-3. SQL injection in the dashboard exposes the full contents of the database.
-4. Plaintext password storage turns a database disclosure into immediate account compromise.
-
-## Remediation
-
-- Replace string-built SQL queries with prepared statements and bound parameters.
-- Validate the `cv` parameter against a strict allowlist of expected resources; do not pass arbitrary user input to file-loading functions.
-- Keep configuration files and logs outside the web root and prevent them from being served by the web server.
-- Remove credentials and other secrets from logs.
-- Store passwords with a modern password-hashing algorithm such as Argon2id or bcrypt, using a unique salt for every password.
-- Return generic user-facing errors and log detailed database errors only on the server.
-- Rotate every credential exposed by the configuration file or database.
-
-## Conclusion
-
-The room demonstrates why seemingly separate weaknesses must be considered as an attack chain. An arbitrary file read provided the initial credentials, an authenticated SQL injection exposed the database, and plaintext password storage greatly increased the impact of that disclosure.
+> This write-up covers an authorized TryHackMe lab. Don't test these techniques against systems you don't own or have permission to assess.
